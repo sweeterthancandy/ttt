@@ -914,36 +914,27 @@ void RenderToDot(GameTree const& tree){
                 }
         }
 
-        #if 0
-        std::vector<Eval> proto = {Eval_Win, Eval_Draw, Eval_Lose};
-        for( auto p : proto ){
-                if( terminalMask & p ){
-                        std::cout << "win [shape=record,label="<f0> one|<f1> two"];
-                }
-        }
-        #endif
-
         std::cout << "}";
 }
 
-void test1(){
-        //GameContext ctx(Player_Villian);
-        GameContext ctx(Player_Hero);
+enum RenderOpt{
+        RenderOpt_Solve,
+};
+void render(Player p, RenderOpt opt){
+
         TickTackToeLogic logic;
         GameTreeBuilder builder;
+        GameContext ctx(p);
         auto tree = builder.Make(ctx);
-
-        #if 0
-        for( auto term : tree.GetTerminals() ){
-                std::cout << term->GetContext().GetBoard() << "\n";
-        }
         
-        #endif
-        //Display(tree.GetRoot());
-        StrategyBuilder sb;
-        auto ret = sb.Build(tree);
-        //Display(ret.GetRoot());
-        RenderToDot(ret);
+        switch(opt){
+        case RenderOpt_Solve:{
+                StrategyBuilder sb;
+                auto ret = sb.Build(tree);
+                RenderToDot(ret);
+        }
+                break;
+        }
 }
 
 void test2(){
@@ -1043,10 +1034,28 @@ void driver(){
 
 
 
-int main(){
+int main(int argc, char* argv[]){
         try{
-                test1();
-                //driver();
+                switch(argc){
+                case 1:
+                        driver();
+                        break;
+                case 2: {
+                        std::string arg = argv[1];
+                        if( arg == "--hero" ){
+                                render(Player_Hero, RenderOpt_Solve);
+                        } else if(arg == "--villian"){
+                                render(Player_Villian, RenderOpt_Solve);
+                        } else if(arg == "--driver"){
+                                driver();
+                        } else{
+                        }
+                        break;
+                }
+                default:
+                        std::cerr  << "unknown args\n";
+                        return EXIT_FAILURE;
+                }
         } catch(std::exception const& e){
                 std::cerr << e.what() << "\n";
                 return EXIT_FAILURE;
