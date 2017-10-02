@@ -72,6 +72,17 @@ inline char PlayerToken(Player p){
         }
 }
 
+template<class To, class From>
+inline To Cast(From ptr){
+        //PRINT( ptr->GetType() );
+        //PRINT( std::remove_pointer_t<To>::__type__() );
+        if( ptr->GetType() == std::remove_pointer_t<To>::__type__())
+                return reinterpret_cast<To>(ptr);
+        std::stringstream fmt;
+        fmt << "casting " << ptr->GetType() << " to " << std::remove_pointer_t<To>::__type__();
+        throw std::domain_error(fmt.str());
+}
+
 enum Eval{
         Eval_Win   = 0x01,
         Eval_Draw  = 0x02,
@@ -432,6 +443,7 @@ struct ChoiceNode : Node{
         }
         auto begin()const{ return next_.begin(); }
         auto end()const{ return next_.end(); }
+        static Type __type__(){ return Type_Choice; }
 private:
         std::vector<Node*> next_;
 };
@@ -442,6 +454,7 @@ struct PayoffNode : Node{
                 ,eval_{eval}
         {}
         auto GetPayoff()const{ return eval_; }
+        static Type __type__(){ return Type_Payoff; }
 private:
         Eval eval_;
 };
@@ -541,7 +554,7 @@ struct GameTreeBuilder{
 
                                                 switch(nextCtx.GetCtrl()){
                                                 case GameCtrl_Continue:
-                                                        Generate(tree, reinterpret_cast<ChoiceNode*>(ptr), nextCtx);
+                                                        Generate(tree, Cast<ChoiceNode*>(ptr), nextCtx);
                                                         break;
                                                 case GameCtrl_HeroWins:
                                                 case GameCtrl_VillianWins:
@@ -638,7 +651,7 @@ void DisplayImpl(std::vector<Node*> history){
                 leaf.NewLine();
                 leaf.NewLine();
                 leaf.NewLine();
-                leaf.Append("Payoff " + boost::lexical_cast<std::string>(reinterpret_cast<PayoffNode*>(target)->GetPayoff()));
+                leaf.Append("Payoff " + boost::lexical_cast<std::string>(Cast<PayoffNode*>(target)->GetPayoff()));
 
                 picture += leaf;
                 picture.Display();
@@ -650,7 +663,7 @@ void DisplayImpl(std::vector<Node*> history){
                 picture += Detail::PictureBox::Make( history.back()->GetContext().GetBoard().ToString() );
                 picture.Display();
                 #endif
-                for( auto ptr : *reinterpret_cast<ChoiceNode*>(target)){
+                for( auto ptr : *Cast<ChoiceNode*>(target)){
                         history.push_back(ptr);
                         DisplayImpl(history);
                         history.pop_back();
@@ -724,15 +737,17 @@ private:
                         return eval_[ctx].mask_;
 
                 if( node->GetType() == Node::Type_Payoff ){
-                        static std::map<int,unsigned> payoffMap = {{1, Eval_Win}, {0, Eval_Draw}, {-1, Eval_Lose}};
-                        int factor = ( p == Player_Hero ? 1 : -1 );
-                        int payoff = reinterpret_cast<PayoffNode const*>(node)->GetPayoff() * factor;
-                        eval_[ctx].mask_ = payoffMap[payoff];
+                        static std::map<Eval,Eval> invMap = {{Eval_Lose, Eval_Win}, {Eval_Draw, Eval_Draw}, {Eval_Win, Eval_Lose}};
+                        auto payoff = Cast<PayoffNode const*>(node)->GetPayoff();
+                        if( p  == Player_Villian ){
+                                payoff = invMap[payoff];
+                        }
+                        eval_[ctx].mask_ = payoff;
                         return eval_[ctx].mask_;
                 }
 
                 
-                auto choicePtr = reinterpret_cast<ChoiceNode const*>(node);
+                auto choicePtr = Cast<ChoiceNode const*>(node);
 
 
                 if(ctx.ActivePlayer() == p ){
@@ -802,7 +817,7 @@ struct StrategyBuilder{
                         if( ptr->GetType() == Node::Type_Payoff)
                                 continue;
 
-                        auto choicePtr = reinterpret_cast<ChoiceNode*>(ptr);
+                        auto choicePtr = Cast<ChoiceNode*>(ptr);
 
                         switch(ptr->GetContext().ActivePlayer()){
                         case Player_Hero:{
@@ -831,7 +846,7 @@ struct StrategyBuilder{
                                         std::cerr << "Can't find :(\n";
                                         break;
                                 }
-                                for( auto child : *reinterpret_cast<ChoiceNode const*>(aux)){
+                                for( auto child : *Cast<ChoiceNode const*>(aux)){
 
                                         auto makeRet = fac.Make(child->GetContext());
                                         auto next = makeRet.second;
@@ -886,12 +901,14 @@ void RenderToDot(GameTree const& tree){
                                 << PlayerToken(b.GetTile(2,2))
                                 << "}"
                         << "}\"];\n";
-                for( auto next : *reinterpret_cast<ChoiceNode*>(ptr)){
-                        std::cout << t << " -> " << tag(next) << ";\n";
+                if( ptr->GetType() == Node::Type_Choice ){
+                        for( auto next : *Cast<ChoiceNode*>(ptr)){
+                                std::cout << t << " -> " << tag(next) << ";\n";
+                        }
                 }
 
                 if( ptr->GetType() == Node::Type_Payoff ){
-                        auto payoff = reinterpret_cast<PayoffNode*>(ptr)->GetPayoff();
+                        auto payoff = Cast<PayoffNode*>(ptr)->GetPayoff();
                         std::cout << t << " -> " << EvalToString(Eval_Win) << ";\n";
                         terminalMask |= Eval_Win;
                 }
@@ -960,7 +977,7 @@ void driver(){
 
                 switch(ctx.ActivePlayer()){
                 case Player_Hero: {
-                        auto move = reinterpret_cast<ChoiceNode const*>(strat.Lookup(ctx));
+                        auto move = Cast<ChoiceNode const*>(strat.Lookup(ctx));
 
                         assert( !! move );
 
@@ -1027,7 +1044,12 @@ void driver(){
 
 
 int main(){
-        test1();
-        //driver();
+        try{
+                test1();
+                //driver();
+        } catch(std::exception const& e){
+                std::cerr << e.what() << "\n";
+                return EXIT_FAILURE;
+        }
 }
 
