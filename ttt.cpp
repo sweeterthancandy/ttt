@@ -909,8 +909,8 @@ void RenderToDot(GameTree const& tree){
 
                 if( ptr->GetType() == Node::Type_Payoff ){
                         auto payoff = Cast<PayoffNode*>(ptr)->GetPayoff();
-                        std::cout << t << " -> " << EvalToString(Eval_Win) << ";\n";
-                        terminalMask |= Eval_Win;
+                        std::cout << t << " -> " << EvalToString(payoff) << ";\n";
+                        terminalMask |= payoff;
                 }
         }
 
