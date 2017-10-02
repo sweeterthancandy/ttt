@@ -746,6 +746,12 @@ private:
                         return eval_[ctx].mask_;
                 }
 
+                using aggregator_t = std::function<Eval(std::vector<Eval>const&)>;
+
+                aggregator_t hero_agg_ = [](std::vector<Eval> const& v){
+                        return v.front();
+                };
+
                 
                 auto choicePtr = Cast<ChoiceNode const*>(node);
 
