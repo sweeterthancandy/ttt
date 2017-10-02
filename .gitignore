@@ -1,3 +1,5 @@
 *.dot
 *.png
 ttt
+!hero.png
+!villian.png
