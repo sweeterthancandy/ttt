@@ -72,6 +72,22 @@ inline char PlayerToken(Player p){
         }
 }
 
+enum Eval{
+        Eval_Win   = 0x01,
+        Eval_Draw  = 0x02,
+        Eval_Lose  = 0x04,
+};
+std::string EvalToString(Eval e) {
+        switch (e) {
+        case Eval_Win:
+                return "Eval_Win";
+        case Eval_Draw:
+                return "Eval_Draw";
+        case Eval_Lose:
+                return "Eval_Lose";
+        }
+}
+
 
 namespace Detail{
         struct PictureBox{
@@ -390,34 +406,44 @@ struct Node{
                 Type_Choice,
                 Type_Payoff
         };
-        Node(Type type, GameContext ctx,
-             int payoff=0 /* only valid when Type_Payoff */):
-                type_{type},
-                ctx_{std::move(ctx)},
-                opt_payoff_{payoff}
-        {}
+public:
         Type GetType()const{ return type_; }
         GameContext const& GetContext()const{ return ctx_; }
-        int GetPayoff()const{ return opt_payoff_; }
+protected:
+        explicit Node(Type type, GameContext ctx):
+                type_{type},
+                ctx_{std::move(ctx)}
+        {}
+private:
+        Type type_;
+        GameContext ctx_;
+};
 
+struct ChoiceNode : Node{
+        explicit ChoiceNode(GameContext ctx):
+                Node{Type_Choice, std::move(ctx)}
+        {}
         // only when Choice
         void RegisterChild(Node* ptr){
                 next_.push_back(ptr);
         }
-
-        auto begin()const{ return next_.begin(); }
-        auto end()const{ return next_.end(); }
         auto NumChildren()const{
                 return next_.size();
         }
-
+        auto begin()const{ return next_.begin(); }
+        auto end()const{ return next_.end(); }
 private:
-        Type type_;
-        GameContext ctx_;
-        // when Payoff
-        int opt_payoff_;
-        // when Choice
         std::vector<Node*> next_;
+};
+
+struct PayoffNode : Node{
+        explicit PayoffNode(GameContext ctx, Eval eval):
+                Node{Type_Payoff, std::move(ctx)}
+                ,eval_{eval}
+        {}
+        auto GetPayoff()const{ return eval_; }
+private:
+        Eval eval_;
 };
 
 // TODO, rather than create a new graph, use this
@@ -472,16 +498,16 @@ struct NodeFactory{
                 Node* ptr = nullptr;
                 switch(ctx.GetCtrl()){
                 case GameCtrl_Continue:
-                        ptr = new Node{Node::Type_Choice, ctx};
+                        ptr = new ChoiceNode{ctx};
                         break;
                 case GameCtrl_HeroWins:
-                        ptr = new Node{Node::Type_Payoff, ctx, 1};
+                        ptr = new PayoffNode{ctx, Eval_Win};
                         break;
                 case GameCtrl_VillianWins:
-                        ptr = new Node{Node::Type_Payoff, ctx,-1};
+                        ptr = new PayoffNode{ctx, Eval_Lose};
                         break;
                 case GameCtrl_Draw:
-                        ptr = new Node{Node::Type_Payoff, ctx, 0};
+                        ptr = new PayoffNode{ctx, Eval_Draw};
                         break;
                 }
                 world_.emplace(ctx, ptr);
@@ -497,7 +523,7 @@ private:
         the game tree
 */
 struct GameTreeBuilder{
-        void Generate(GameTree& tree, Node* parent, GameContext ctx){
+        void Generate(GameTree& tree, ChoiceNode* parent, GameContext ctx){
                 static TickTackToeLogic logic;
                 for( int x=0;x!=3;++x){
                         for( int y=0;y!=3;++y){
@@ -515,7 +541,7 @@ struct GameTreeBuilder{
 
                                                 switch(nextCtx.GetCtrl()){
                                                 case GameCtrl_Continue:
-                                                        Generate(tree, ptr, nextCtx);
+                                                        Generate(tree, reinterpret_cast<ChoiceNode*>(ptr), nextCtx);
                                                         break;
                                                 case GameCtrl_HeroWins:
                                                 case GameCtrl_VillianWins:
@@ -530,7 +556,7 @@ struct GameTreeBuilder{
                 }
         }
         GameTree Make(GameContext ctx){
-                auto ptr = new Node{Node::Type_Choice, ctx};
+                auto ptr = new ChoiceNode{ctx};
                 GameTree tree{ptr};
                 // Assume board isn't finished
                 Generate(tree, ptr, ctx);
@@ -612,7 +638,7 @@ void DisplayImpl(std::vector<Node*> history){
                 leaf.NewLine();
                 leaf.NewLine();
                 leaf.NewLine();
-                leaf.Append("Payoff " + boost::lexical_cast<std::string>(target->GetPayoff()));
+                leaf.Append("Payoff " + boost::lexical_cast<std::string>(reinterpret_cast<PayoffNode*>(target)->GetPayoff()));
 
                 picture += leaf;
                 picture.Display();
@@ -624,7 +650,7 @@ void DisplayImpl(std::vector<Node*> history){
                 picture += Detail::PictureBox::Make( history.back()->GetContext().GetBoard().ToString() );
                 picture.Display();
                 #endif
-                for( auto ptr : *target){
+                for( auto ptr : *reinterpret_cast<ChoiceNode*>(target)){
                         history.push_back(ptr);
                         DisplayImpl(history);
                         history.pop_back();
@@ -666,21 +692,6 @@ void Display(Node* ptr){
         is a move we can take, which results in a node with
  */
 
-enum Eval{
-        Eval_Win   = 0x01,
-        Eval_Draw  = 0x02,
-        Eval_Lose  = 0x04,
-};
-std::string EvalToString(Eval e) {
-        switch (e) {
-        case Eval_Win:
-                return "Eval_Win";
-        case Eval_Draw:
-                return "Eval_Draw";
-        case Eval_Lose:
-                return "Eval_Lose";
-        }
-}
 
 struct EvalMetric{
         struct Result{
@@ -715,10 +726,14 @@ private:
                 if( node->GetType() == Node::Type_Payoff ){
                         static std::map<int,unsigned> payoffMap = {{1, Eval_Win}, {0, Eval_Draw}, {-1, Eval_Lose}};
                         int factor = ( p == Player_Hero ? 1 : -1 );
-                        int payoff = node->GetPayoff() * factor;
+                        int payoff = reinterpret_cast<PayoffNode const*>(node)->GetPayoff() * factor;
                         eval_[ctx].mask_ = payoffMap[payoff];
                         return eval_[ctx].mask_;
                 }
+
+                
+                auto choicePtr = reinterpret_cast<ChoiceNode const*>(node);
+
 
                 if(ctx.ActivePlayer() == p ){
                         [&](){
@@ -739,7 +754,7 @@ private:
                                 };
                                 for( auto t : ticker ){
                                         bool found = false;
-                                        for( auto child : *node){
+                                        for( auto child : *choicePtr){
                                                 if( Populate_(p, child) == t ){
                                                         // Their may be more than one
                                                         found = true;
@@ -750,13 +765,13 @@ private:
                                         if( found )
                                                 return;
                                 }
-                                assert( node->NumChildren() == 0 );
+                                assert( choicePtr->NumChildren() == 0 );
                         }();
                         return eval_[ctx].mask_;
                 } else {
                         unsigned e = 0;
                         auto& ref = eval_[ctx];
-                        for( auto child : *node){
+                        for( auto child : *choicePtr){
                                 e |= Populate_(p, child);
                                 ref.next_.push_back(child);
                         }
@@ -787,6 +802,8 @@ struct StrategyBuilder{
                         if( ptr->GetType() == Node::Type_Payoff)
                                 continue;
 
+                        auto choicePtr = reinterpret_cast<ChoiceNode*>(ptr);
+
                         switch(ptr->GetContext().ActivePlayer()){
                         case Player_Hero:{
 
@@ -799,7 +816,7 @@ struct StrategyBuilder{
                                                 stratTree.Register(next);
                                                 stack.push_back(next);
                                         }
-                                        ptr->RegisterChild(next);
+                                        choicePtr->RegisterChild(next);
                                         break;
                                 }
                                 break;
@@ -814,7 +831,7 @@ struct StrategyBuilder{
                                         std::cerr << "Can't find :(\n";
                                         break;
                                 }
-                                for( auto child : *aux){
+                                for( auto child : *reinterpret_cast<ChoiceNode const*>(aux)){
 
                                         auto makeRet = fac.Make(child->GetContext());
                                         auto next = makeRet.second;
@@ -822,7 +839,7 @@ struct StrategyBuilder{
                                                 stratTree.Register(next);
                                                 stack.push_back(next);
                                         }
-                                        ptr->RegisterChild(next);
+                                        choicePtr->RegisterChild(next);
                                 }
                                 break;
                         }
@@ -869,27 +886,14 @@ void RenderToDot(GameTree const& tree){
                                 << PlayerToken(b.GetTile(2,2))
                                 << "}"
                         << "}\"];\n";
-                for( auto next : *ptr){
+                for( auto next : *reinterpret_cast<ChoiceNode*>(ptr)){
                         std::cout << t << " -> " << tag(next) << ";\n";
                 }
 
                 if( ptr->GetType() == Node::Type_Payoff ){
-                        switch( ptr->GetPayoff()){
-                        case 1:
-                                std::cout << t << " -> " << EvalToString(Eval_Win) << ";\n";
-                                terminalMask |= Eval_Win;
-                                break;
-                        case 0:
-                                std::cout << t << " -> " << EvalToString(Eval_Draw) << ";\n";
-                                terminalMask |= Eval_Draw;
-                                break;
-                        case -1:
-                                std::cout << t << " -> " << EvalToString(Eval_Lose) << ";\n";
-                                terminalMask |= Eval_Lose;
-                                break;
-                        default:
-                                break;
-                        }
+                        auto payoff = reinterpret_cast<PayoffNode*>(ptr)->GetPayoff();
+                        std::cout << t << " -> " << EvalToString(Eval_Win) << ";\n";
+                        terminalMask |= Eval_Win;
                 }
         }
 
@@ -956,7 +960,8 @@ void driver(){
 
                 switch(ctx.ActivePlayer()){
                 case Player_Hero: {
-                        auto move = strat.Lookup(ctx);
+                        auto move = reinterpret_cast<ChoiceNode const*>(strat.Lookup(ctx));
+
                         assert( !! move );
 
                         // dedeuce move
